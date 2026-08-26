@@ -1,7 +1,8 @@
 '''
 
 This code implements the embedding generation process.
-It extracts embeddings from a pre-trained MalConv model, selects representative benign and malware samples, and generates synthetic embeddings that are centered around benign samples but perturbed towards malware-specific directions. The generated embeddings can be used for further analysis or training of machine learning models for malware detection.
+It extracts embeddings from a pre-trained MalConv model,
+selects representative benign and malware samples, and generates synthetic embeddings that are centered around benign samples but perturbed towards malware-specific directions. The generated embeddings can be used for further analysis or training of machine learning models for malware detection.
 
 '''
 
