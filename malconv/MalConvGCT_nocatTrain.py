@@ -3,18 +3,14 @@ import pandas as pd
 from tqdm import tqdm
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import  DataLoader
 from MalConvGCT_nocat import MalConvGCT
 from binaryLoader import BinaryDataset, RandomChunkSampler, pad_collate_func
-from sklearn.metrics import roc_auc_score
 import argparse
 
 #------------------------------------------
-# RUN command for windows malware: python MalConvGCT_nocatTrain.py ../MalwareDataset/windows/altered/ ../MalwareDataset/windows/goodware/ FAMILY_NAME windows
-# RUN command for android malware: python MalConvGCT_nocatTrain.py ../MalwareDataset/android/altered/ ../MalwareDataset/android/goodware/ FAMILY_NAME android
-# set the OS variable as "windows" or "android"
+# RUN command: python MalConvGCT_nocatTrain.py TARGET_FAMILY_NAME
 #------------------------------------------
 
 #Check if the input is a valid directory
@@ -36,8 +32,6 @@ parser.add_argument('--batch_size', type=int, default=128, help='Batch size duri
 #Default is set ot 16 MB! 
 parser.add_argument('--max_len', type=int, default=16000000, help='Maximum length of input file in bytes, at which point files will be truncated')
 parser.add_argument('--gpus', nargs='+', type=int)
-parser.add_argument('mal_dir', type=dir_path, help='Path to directory containing malware files for training')
-parser.add_argument('ben_dir', type=dir_path, help='Path to directory containing benign files for training')
 parser.add_argument('target_family', type=str, help='Target malware family')
 
 args = parser.parse_args()
@@ -56,8 +50,8 @@ target_family = args.target_family
 ben_train = pd.read_csv('../data/real_data/training_goodware.csv')
 mal_train = pd.read_csv('../data/real_data/training_malware.csv')
 
-ben_dir = args.ben_dir
-mal_dir = args.mal_dir
+ben_dir = "../data/real_data/goodware/"
+mal_dir = "../data/real_data/malware/"
 
 train_dataset = BinaryDataset(ben_dir, mal_dir, ben_train, mal_train, sort_by_size=True, max_len=MAX_FILE_LEN)
 loader_threads = 0
@@ -119,7 +113,6 @@ for epoch in tqdm(range(EPOCHS)):
     )
 
 print("\nTraining finished.\n")
-
 print("Saving final model...")
 
 model_path = os.path.join('../models', target_family + ".checkpoint")
