@@ -13,15 +13,10 @@ class BinaryDataset(data.Dataset):
     
     TODO: Auto un-gzip files if they have g-zip compression 
     """
-    def __init__(self, good_dir, bad_dir, good_csv, bad_csv, OS, sort_by_size=False, max_len=16000000):
-        
-        if OS == 'android':
-            bad_file_extension = '.dex'
-            good_file_extension = '.dex'
-        elif OS == 'windows':
-            bad_file_extension = '.exe'
-            good_file_extension = ''
+    def __init__(self, good_dir, bad_dir, good_csv, bad_csv, sort_by_size=False, max_len=16000000):
 
+        bad_file_extension = '.exe'
+        good_file_extension = ''
 
         #Tuple (file_path, label, file_size)
         self.all_files = []

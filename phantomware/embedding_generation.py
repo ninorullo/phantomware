@@ -20,7 +20,6 @@ import numpy as np
 import os
 import pandas as pd
 from tqdm import tqdm
-import time
 
 
 def select_benign_extremes(
@@ -118,7 +117,7 @@ def select_benign_representatives(
     # -------------------------------------------------------
     benign_subset = torch.cat([centroids, boundary_samples], dim=0)
 
-    return centroids.to(device), boundary_samples.to(device), benign_subset.to(device)
+    return boundary_samples.to(device), benign_subset.to(device)
 
 
 def sample_goodware(good_embeds):
@@ -158,7 +157,8 @@ def extract_embeddings(model, loader, device):
     if len(good_embeds) > 0:
         good_embeds = torch.cat(good_embeds, dim=0)
 
-    mal_embeds = torch.cat(mal_embeds, dim=0)
+    if len(mal_embeds) > 0:
+        mal_embeds = torch.cat(mal_embeds, dim=0)
 
     return good_embeds, mal_embeds
 
@@ -316,7 +316,6 @@ families = [
 ]
 
 device = "cuda"
-script_dir = os.path.dirname(os.path.abspath(__file__))
 
 for TARGET in families:
     print(f"\n=== FAMILY: {TARGET} ===", flush=True)
@@ -324,16 +323,15 @@ for TARGET in families:
     # -----------------------
     # Load dataset
     # -----------------------
-    ben_train = pd.read_csv(f'../MalwareDataset/windows/ben_train.csv')
-    mal_train = pd.read_csv(f'../MalwareDataset/windows/mal_train_{TARGET}.csv')
-    mal_train = mal_train[mal_train["family"] == TARGET]
+    training_goodware_samples = pd.read_csv('../data/real_data/training_goodware.csv')
+    training_malware_samples = pd.read_csv('../data/real_data/training_malware.csv')
+    training_target_family_malware_samples = training_malware_samples[training_malware_samples["family"] == TARGET]
 
     dataset = BinaryDataset(
-        "../MalwareDataset/windows/goodware/",
-        "../MalwareDataset/windows/altered/",
-        ben_train,
-        mal_train,
-        "windows",
+        "../data/real_data/goodware/",
+        "../data/real_data/malware/",
+        training_goodware_samples,
+        training_target_family_malware_samples,
         sort_by_size=True,
         max_len=16000000
     )
@@ -345,31 +343,10 @@ for TARGET in families:
         collate_fn=pad_collate_func
     )
 
-    mal_test = pd.read_csv(f'../MalwareDataset/windows/mal_test_{TARGET}.csv')
-    mal_test = mal_test[mal_test["family"] == TARGET]
-
-    test_dataset = BinaryDataset(
-        None,
-        "../MalwareDataset/windows/altered/",
-        None,
-        mal_test,
-        "windows",
-        sort_by_size=True,
-        max_len=16000000
-    )
-
-    loader_mal_test = DataLoader(
-        test_dataset,
-        batch_size=128,
-        num_workers=0,
-        collate_fn=pad_collate_func
-    )
-
     # -----------------------
     # Load MalConv
     # -----------------------
-    model_folder = os.path.join(script_dir, "nocat_MalConvGCT_channels_128_filterSize_256_stride_64_embdSize_8_maxFileLen_16MB_target_family_"+TARGET)
-    model_path = os.path.join(model_folder, TARGET + ".checkpoint")
+    model_path = os.path.join('../models', TARGET + ".checkpoint")
 
     malconv_model = MalConvGCT(
         channels=128,
@@ -385,63 +362,60 @@ for TARGET in families:
     # -----------------------
     # Extract embeddings
     # -----------------------
-    good_embeds, mal_target_embeds = extract_embeddings(malconv_model, loader_goodware_and_target, device)
-    print("Good:", good_embeds.shape, "Mal:", mal_target_embeds.shape, flush=True)
+    goodware_embeddings, target_family_embeddings = extract_embeddings(malconv_model, loader_goodware_and_target, device)
+    print("Good:", goodware_embeddings.shape, "Mal:", target_family_embeddings.shape, flush=True)
 
-    good_embeds = good_embeds.to(device)
-    mal_target_embeds = mal_target_embeds.to(device)
+    goodware_embeddings = goodware_embeddings.to(device)
+    target_family_embeddings = target_family_embeddings.to(device)
 
-    good_embeds = F.normalize(good_embeds, dim=1)
-    mal_target_embeds = F.normalize(mal_target_embeds, dim=1)
+    goodware_embeddings = F.normalize(goodware_embeddings, dim=1)
+    target_family_embeddings = F.normalize(target_family_embeddings, dim=1)
 
     # -----------------------
-    # Subsample malware and goodware embeddings
+    # Sample centroid and frontier samples from the goodware manifold
     # -----------------------
-    good_centroid_samples, good_boundary_samples, good_embeds_centroid_and_boundary = select_benign_representatives(
-        good_embeds.to(device),
-        mal_target_embeds.to(device),
+    goodware_boundary_samples, goodware_centroid_and_boundary_samples = select_benign_representatives(
+        goodware_embeddings,
+        target_family_embeddings,
         k_boundary=1000,
         k_centroids=1000,
         device=device
     )
 
-    good_frontier = select_benign_extremes(
-        good_embeds,
+    goodware_frontier_samples = select_benign_extremes(
+        goodware_embeddings,
         n_components=20,
         samples_per_side=50,
         device=device
     )
 
-    print('good_frontier.shape',good_frontier.shape)
+    print('good_frontier.shape', goodware_frontier_samples.shape)
 
-    generation_pool = torch.cat([
-        good_boundary_samples[:50],
-        good_frontier
+    goodware_anchors_pool = torch.cat([
+        goodware_boundary_samples[:50],
+        goodware_frontier_samples
     ], dim=0)
 
-    generation_pool = torch.unique(
-        generation_pool,
+    goodware_anchors_pool = torch.unique(
+        goodware_anchors_pool,
         dim=0
     )
 
     # -----------------------
     # Generate synthetic
     # -----------------------
-    print('\ngenerating synthetic embeddings...', flush=True)
-
-    synth_embs = generate_synthetic_embeddings(
-        mal_target_embeds,
+    synthetic_embeddings = generate_synthetic_embeddings(
+        target_family_embeddings,
         500,
-        good_embeds_centroid_and_boundary,
-        generation_pool
+        goodware_centroid_and_boundary_samples,
+        goodware_anchors_pool
     )
 
     # -----------------------
     # Save synthetic
     # -----------------------
-    save_path = os.path.join(model_folder, f"synth_embs_feature_based_{TARGET}.csv")
-    print('\nsaving synth data to', save_path)
-    stacked_synth_embs = synth_embs.cpu().numpy()
+    save_path = os.path.join('../synthetic_data', f"synthetic_embeddings_{TARGET}.csv")
+    stacked_synth_embs = synthetic_embeddings.cpu().numpy()
     df = pd.DataFrame(stacked_synth_embs)
     print('\ngenerated', len(df), 'synthetic samples', flush=True)
     df.to_csv(save_path, index=False)

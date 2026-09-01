@@ -19,13 +19,11 @@ class SHADataset(Dataset):
         source_dir,
         sha_column="sha",
         isGoodware=False,
-        #family_column="family",
         max_len=16000000
     ):
 
         self.df = pd.read_csv(csv_path)
         self.sha_column = sha_column
-       # self.family_column = family_column
         self.source_dir = source_dir
         self.max_len = max_len
 
@@ -158,8 +156,8 @@ def build_representative_datasets(
 # =========================================================
 def build_train_loader(TARGET, representative_samples, batch_size=128, max_len=16000000):
 
-    ben_train = pd.read_csv('../MalwareDataset/windows/ben_train.csv')
-    mal_train = pd.read_csv(f'../MalwareDataset/windows/mal_train_{TARGET}.csv')
+    ben_train = pd.read_csv('../data/real_data/training_goodware.csv')
+    mal_train = pd.read_csv('../data/real_data/training_malware.csv')
 
     ben_train, mal_train = build_representative_datasets(
             ben_train,
@@ -171,11 +169,10 @@ def build_train_loader(TARGET, representative_samples, batch_size=128, max_len=1
     print('training: goodware', len(ben_train),' -  malware', len(mal_train))
 
     dataset = BinaryDataset(
-        "../MalwareDataset/windows/goodware/",
-        "../MalwareDataset/windows/altered/",
+        "../data/real_data/goodware/",
+        "../data/real_data/malware/",
         ben_train,
         mal_train,
-        "windows",
         sort_by_size=True,
         max_len=max_len
     )
@@ -271,7 +268,7 @@ def select_symmetric_representatives(
 
     hard_good_idx = torch.topk(
         good_to_mal,
-        k=min(750, len(good_embs))
+        k=min(hard_k, len(good_embs))
     ).indices
 
     hard_good_paths = good_paths[hard_good_idx.cpu().numpy()]
@@ -292,7 +289,7 @@ def select_symmetric_representatives(
     good_cpu = good_embs.cpu().numpy()
 
     kmeans_good = KMeans(
-        n_clusters=min(750, len(good_cpu)),
+        n_clusters=min(num_centroids, len(good_cpu)),
         random_state=0,
         n_init="auto"
     ).fit(good_cpu)
@@ -371,343 +368,7 @@ def select_symmetric_representatives(
 # =========================================================
 # TRAINING FUNCTIONS
 # =========================================================
-'''
-train fc2, normalization
-'''
-def retrain_malconv1(
-        model,
-        synthetic_embeddings,
-        train_loader,
-        device="cuda",
-        epochs=10,
-        lr=1e-4,
-        lambda_synth=0.3,
-        margin=1.0
-):
-
-    model = model.to(device)
-    model.train()
-
-    # Freeze feature extractor behavior
-    for module in model.modules():
-        if isinstance(module, nn.BatchNorm1d):
-            module.eval()
-
-    synthetic_embeddings = synthetic_embeddings.to(device)
-    ce_loss_fn = nn.CrossEntropyLoss()
-
-    # Freeze everything
-    for p in model.parameters():
-        p.requires_grad = False
-
-    # Unfreeze only head
-    for p in model.fc_2.parameters():
-        p.requires_grad = True
-
-    # Optimizer ONLY on trainable params
-    optimizer = torch.optim.Adam(model.fc_2.parameters(), lr=lr)
-
-    bs_syn = 64
-
-    for epoch in range(epochs):
-        total_loss = 0
-
-        for inputs, labels, _, _ in tqdm(train_loader):
-
-            inputs = inputs.to(device)
-            labels = labels.to(device)
-
-            optimizer.zero_grad()
-
-            logits, penult, _ = model(inputs)
-
-            # -------------------------------------------------
-            # classification loss
-            # -------------------------------------------------
-            ce_loss = ce_loss_fn(logits, labels)
-
-            M = penult[labels == 1]
-            G = penult[labels == 0]
-
-            synth_loss = torch.tensor(0.0, device=device)
-            ce_syn = torch.tensor(0.0, device=device)
-
-            if M.size(0) > 4 and G.size(0) > 4:
-
-                M = F.normalize(M, dim=1)
-                G = F.normalize(G, dim=1)
-
-                # -------------------------------------------------
-                # sample synthetic embeddings
-                # -------------------------------------------------
-                idx = torch.randint(0, synthetic_embeddings.size(0), (bs_syn,), device=device)
-                S = synthetic_embeddings.index_select(0, idx)
-                S = F.normalize(S, dim=1)
-
-                # -----------------------------
-                # 1. malware ↔ synthetic (alignment)
-                # -----------------------------
-                sim_ms = torch.matmul(M, S.T)
-                sim_mg = torch.matmul(M, G.T)
-
-                pos = sim_ms.max(dim=1).values
-                neg = sim_mg.max(dim=1).values
-
-                loss_ms = F.relu(margin - pos + neg).mean()
-
-                # -----------------------------
-                # 2. malware ↔ good (separation)
-                # -----------------------------
-                loss_mg = torch.matmul(M, G.T).max(dim=1).values.mean()
-
-                # -----------------------------
-                # 3. synthetic ↔ good (separation)
-                # -----------------------------
-                loss_sg = torch.matmul(S, G.T).mean()
-
-                synth_loss = (
-                    loss_ms
-                    - 0.5 * loss_mg
-                    - 0.5 * loss_sg
-                )
-
-                logits_syn = model.classify_from_penult(S)
-                labels_syn = torch.ones(S.size(0), dtype=torch.long, device=device)
-
-                ce_syn = ce_loss_fn(logits_syn, labels_syn)
-
-            loss = ce_loss + lambda_synth * (ce_syn + torch.tanh(synth_loss))
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss:.4f}")
-
-    return model
-
-
-'''
-train fc1 and fc2, normalization
-'''
-def retrain_malconv2(
-        model,
-        synthetic_embeddings,
-        train_loader,
-        device="cuda",
-        epochs=10,
-        lr=1e-4,
-        lambda_synth=0.1,
-        margin=1.0
-):
-
-    model = model.to(device)
-    model.train()
-
-    # Freeze feature extractor behavior
-    for module in model.modules():
-        if isinstance(module, nn.BatchNorm1d):
-            module.eval()
-
-    synthetic_embeddings = synthetic_embeddings.to(device)
-    ce_loss_fn = nn.CrossEntropyLoss()
-
-    # Freeze everything
-    for p in model.parameters():
-        p.requires_grad = False
-
-    # Unfreeze fc_1 + fc_2
-    for p in model.fc_1.parameters():
-        p.requires_grad = True
-
-    for p in model.fc_2.parameters():
-        p.requires_grad = True
-
-    # Optimizer ONLY on trainable params
-    optimizer = torch.optim.Adam([
-        {"params": model.fc_1.parameters(), "lr": lr * 0.1},  # slower
-        {"params": model.fc_2.parameters(), "lr": lr}  # faster
-    ])
-
-    bs_syn = 64
-
-    for epoch in range(epochs):
-        total_loss = 0
-
-        for inputs, labels, _, _ in tqdm(train_loader):
-
-            inputs = inputs.to(device)
-            labels = labels.to(device)
-
-            optimizer.zero_grad()
-
-            logits, penult, _ = model(inputs)
-
-            # -------------------------------------------------
-            # classification loss
-            # -------------------------------------------------
-            ce_loss = ce_loss_fn(logits, labels)
-
-            M = penult[labels == 1]
-            G = penult[labels == 0]
-
-            synth_loss = torch.tensor(0.0, device=device)
-            ce_syn = torch.tensor(0.0, device=device)
-
-            if M.size(0) > 4 and G.size(0) > 4:
-
-                M = F.normalize(M, dim=1)
-                G = F.normalize(G, dim=1)
-
-                # -------------------------------------------------
-                # sample synthetic embeddings
-                # -------------------------------------------------
-                idx = torch.randint(0, synthetic_embeddings.size(0), (bs_syn,), device=device)
-                S = synthetic_embeddings.index_select(0, idx)
-                S = F.normalize(S, dim=1)
-
-                # -----------------------------
-                # 1. malware ↔ synthetic (alignment)
-                # -----------------------------
-                sim_ms = torch.matmul(M, S.T)
-                sim_mg = torch.matmul(M, G.T)
-
-                pos = sim_ms.max(dim=1).values
-                neg = sim_mg.max(dim=1).values
-
-                loss_ms = F.relu(margin - pos + neg).mean()
-
-                # -----------------------------
-                # 2. malware ↔ good (separation)
-                # -----------------------------
-                loss_mg = torch.matmul(M, G.T).max(dim=1).values.mean()
-
-                # -----------------------------
-                # 3. synthetic ↔ good (separation)
-                # -----------------------------
-                loss_sg = torch.matmul(S, G.T).mean()
-
-                synth_loss = (
-                    loss_ms
-                    - 0.5 * loss_mg
-                    - 0.5 * loss_sg
-                )
-
-                logits_syn = model.classify_from_penult(S)
-                labels_syn = torch.ones(S.size(0), dtype=torch.long, device=device)
-
-                ce_syn = ce_loss_fn(logits_syn, labels_syn)
-
-            with torch.no_grad():
-                _, penult_ref, _ = model(inputs)
-
-            reg = (penult - penult_ref).pow(2).mean()
-
-            loss = ce_loss + lambda_synth * (ce_syn + torch.tanh(synth_loss)) + 0.01 * reg
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss:.4f}")
-
-    return model
-
-
-''' BEST 
-train fc2 only, no normalization
-Teach classifier: synthetic samples are malware, a malware decision boundary
-'''
-def retrain_malconv3(
-        model,
-        synthetic_embeddings,
-        train_loader,
-        device="cuda",
-        epochs=10,
-        lr=1e-4,
-        lambda_synth=1.0
-):
-
-    model = model.to(device)
-    model.train()
-
-    # freeze batchnorm
-    for m in model.modules():
-        if isinstance(m, nn.BatchNorm1d):
-            m.eval()
-
-    ce_loss_fn = nn.CrossEntropyLoss()
-
-    # freeze everything except head
-    for p in model.parameters():
-        p.requires_grad = False
-
-    for p in model.fc_2.parameters():
-        p.requires_grad = True
-
-    optimizer = torch.optim.Adam(model.fc_2.parameters(), lr=lr)
-    bs_syn = 64
-
-    for epoch in range(epochs):
-        total_loss = 0
-
-        for inputs, labels, _, _ in tqdm(train_loader, desc="Fine-tuning"):
-            inputs = inputs.to(device)
-            labels = labels.to(device)
-            optimizer.zero_grad()
-
-            # -------------------------------------------------
-            # real data loss
-            # -------------------------------------------------
-            logits, _, _ = model(inputs)
-            ce_real = ce_loss_fn(logits, labels)
-
-            # -------------------------------------------------
-            # synthetic batch
-            # -------------------------------------------------
-            idx = torch.randint(0, synthetic_embeddings.size(0), (bs_syn,), device=device)
-            S = synthetic_embeddings.index_select(0, idx)
-
-            logits_syn = model.classify_from_penult(S)
-
-            # FORCE synthetic → malware
-            label_syn = torch.ones(S.size(0), dtype=torch.long, device=device)
-            ce_syn = ce_loss_fn(logits_syn, label_syn)
-
-            # -------------------------------------------------
-            # classifier-space margin constraint
-            # -------------------------------------------------
-            logp = F.log_softmax(logits_syn, dim=1)
-
-            # encourage confident malware prediction
-            conf_mal = -logp[:, 1].mean()
-
-            # discourage ambiguity (entropy minimization)
-            entropy = -(logp * logp.exp()).sum(dim=1).mean()
-            synth_loss = conf_mal + 0.1 * entropy#nel paper la componente entropy viene omessa (un esperimento condotto su vflooder dimostra che senza la entropy si ottengono gli stessi risultati)
-
-            # -------------------------------------------------
-            # final loss
-            # -------------------------------------------------
-            loss = ce_real + lambda_synth * (ce_syn + synth_loss)
-            #loss = ce_real + ce_syn #--> for ablation only
-
-            # -------------------------------------------------
-            # backprop and optimize
-            # -------------------------------------------------
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss:.4f}")
-
-    return model
-
-
-def retrain_malconv_paper_version(
+def finetune_model(
         model,
         synthetic_embeddings,
         train_loader,
@@ -767,7 +428,6 @@ def retrain_malconv_paper_version(
             # final loss
             # -------------------------------------------------
             loss = ce_real + lambda_synth*ce_syn
-            #loss = ce_real + ce_syn #--> for ablation only
 
             # -------------------------------------------------
             # backprop and optimize
@@ -778,139 +438,6 @@ def retrain_malconv_paper_version(
             total_loss += loss.item()
 
         print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss:.4f}")
-
-    return model
-
-'''
-no normalization, train fc2 only
-Teach classifier: synthetic samples are difficult malware
-'''
-def retrain_malconv4(
-        model,
-        synthetic_embeddings,
-        train_loader,
-        device="cuda",
-        epochs=10,
-        lr=1e-4,
-        lambda_synth=0.3,
-        lambda_boundary=0.2,
-        lambda_entropy=0.05
-):
-
-    model = model.to(device)
-    model.train()
-
-    # freeze batchnorm
-    for m in model.modules():
-        if isinstance(m, nn.BatchNorm1d):
-            m.eval()
-
-    ce_loss_fn = nn.CrossEntropyLoss()
-
-    # freeze everything
-    for p in model.parameters():
-        p.requires_grad = False
-
-    # train only classifier head
-    for p in model.fc_2.parameters():
-        p.requires_grad = True
-
-    optimizer = torch.optim.Adam(
-        model.fc_2.parameters(),
-        lr=lr
-    )
-
-    bs_syn = 64
-
-    for epoch in range(epochs):
-
-        total_loss = 0
-
-        for inputs, labels, _, _ in tqdm(train_loader):
-
-            inputs = inputs.to(device)
-            labels = labels.to(device)
-
-            optimizer.zero_grad()
-
-            # -------------------------------------------------
-            # REAL DATA
-            # -------------------------------------------------
-            logits_real, _, _ = model(inputs)
-
-            ce_real = ce_loss_fn(
-                logits_real,
-                labels
-            )
-
-            # -------------------------------------------------
-            # SYNTHETIC EMBEDDINGS
-            # -------------------------------------------------
-            idx = torch.randint(
-                0,
-                synthetic_embeddings.size(0),
-                (bs_syn,),
-                device=device
-            )
-
-            S = synthetic_embeddings.index_select(0, idx)
-
-            logits_syn = model.classify_from_penult(S)
-
-            labels_syn = torch.ones(
-                S.size(0),
-                dtype=torch.long,
-                device=device
-            )
-
-            # -------------------------------------------------
-            # 1. synthetic must classify as malware
-            # -------------------------------------------------
-            ce_syn = ce_loss_fn(
-                logits_syn,
-                labels_syn
-            )
-
-            # -------------------------------------------------
-            # 2. boundary pressure
-            #
-            # keep synth near decision boundary
-            # instead of deep malware region
-            # -------------------------------------------------
-            margin = logits_syn[:, 1] - logits_syn[:, 0]
-
-            loss_boundary = torch.abs(margin).mean()
-
-            # -------------------------------------------------
-            # 3. low entropy
-            #
-            # avoid unstable predictions
-            # -------------------------------------------------
-            prob_syn = F.softmax(logits_syn, dim=1)
-
-            entropy = -(
-                prob_syn * torch.log(prob_syn + 1e-8)
-            ).sum(dim=1).mean()
-
-            # -------------------------------------------------
-            # FINAL LOSS
-            # -------------------------------------------------
-            loss = (
-                    ce_real
-                    + lambda_synth * ce_syn
-                    + lambda_boundary * loss_boundary
-                    + lambda_entropy * entropy
-            )
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        print(
-            f"Epoch {epoch+1}/{epochs} | "
-            f"Loss: {total_loss:.4f}"
-        )
 
     return model
 
@@ -976,7 +503,6 @@ families = [
 ]
 
 device = "cuda"
-script_dir = os.path.dirname(os.path.abspath(__file__))
 
 for TARGET in families:
     print(f"\n=== FAMILY: {TARGET} ===", flush=True)
@@ -984,8 +510,7 @@ for TARGET in families:
     # -----------------------
     # Load MalConv
     # -----------------------
-    model_folder = os.path.join(script_dir, "nocat_MalConvGCT_channels_128_filterSize_256_stride_64_embdSize_8_maxFileLen_16MB_target_family_" + TARGET)
-    model_path = os.path.join(model_folder, TARGET + ".checkpoint")
+    model_path = os.path.join('../models', TARGET + ".checkpoint")
 
     malconv_model = MalConvGCT(
         channels=128,
@@ -1002,19 +527,16 @@ for TARGET in families:
     # Load synthetic embeddings
     # -----------------------
     quantity = 50
-    #synth_path = os.path.join(model_folder, f"synth_embs_feature_based_{TARGET}.csv")
-    synth_path = os.path.join(model_folder, f"synth_embs_feature_based_ablation_frontier_goodware_selection_{TARGET}.csv")
-    synthetic_embeds = load_synthetic_embeddings(synth_path, quantity, device)
+    synthetic_embeddings_path = os.path.join('../models', f"synthetic_embeddings_{TARGET}.csv")
+    synthetic_embeddings = load_synthetic_embeddings(synthetic_embeddings_path, quantity, device)
 
     # -----------------------
     # select representative training malware and goodware samples (hard negatives + centroid representatives)
     # ----------------------
-    print('Selecting representative samples...', flush=True)
-
     loader_malware = DataLoader(
         SHADataset(
-            csv_path=f'../MalwareDataset/windows/mal_train_{TARGET}.csv',
-            source_dir="../MalwareDataset/windows/altered/",
+            csv_path='../data/real_data/training_malware.csv',
+            source_dir="../data/real_data/malware/",
             sha_column="sha",
             isGoodware=False,
             max_len=16000000
@@ -1028,8 +550,8 @@ for TARGET in families:
 
     loader_goodware = DataLoader(
         SHADataset(
-            csv_path=f'../MalwareDataset/windows/ben_train.csv',
-            source_dir="../MalwareDataset/windows/goodware/",
+            csv_path='../data/real_data/training_goodware.csv',
+            source_dir="../data/real_data/goodware/",
             sha_column="sha",
             isGoodware=True,
             max_len=16000000
@@ -1050,44 +572,25 @@ for TARGET in families:
         centroid_k=1000  # top 1000 centroids representing global malware structure (excluding target family)
     )
 
-    print("\n=== REPRESENTATIVES ===")
-    print('representative goodware samples:', len(representative_samples["goodware_representatives"]))
-    print('representative malware samples:', len(representative_samples["malware_representatives"]))
-
     # -----------------------
     # Fine-tune model
     # -----------------------
-    print('Fine-tuning model with synthetic embeddings and representative samples...', flush=True)
-
-    fine_tuning_start_time = time.time()
     train_loader = build_train_loader(TARGET, representative_samples)
 
-    # model = retrain_malconv3(#retrain_malconv_paper_version
-    #     model=malconv_model,
-    #     train_loader=train_loader,
-    #     synthetic_embeddings=synthetic_embeds,
-    #     device=device,
-    #     epochs=30
-    # )
-
-    model = retrain_malconv_paper_version(
+    model = finetune_model(
         model=malconv_model,
         train_loader=train_loader,
-        synthetic_embeddings=synthetic_embeds,
+        synthetic_embeddings=synthetic_embeddings,
         device=device,
-        epochs=30,
+        epochs=10,
         lambda_synth=2.0,
     )
-
-    print('fine tuning time', time.time() - fine_tuning_start_time, flush=True)
 
     # -----------------------
     # Save model
     # -----------------------
-    print("Saving augmented model...", flush=True)
 
-    model_path = os.path.join(model_folder, f"{TARGET}_50_feature_based_embeddings_ablation_frontier_goodware_selection.checkpoint")
-
+    model_path = os.path.join('../models', TARGET + ".checkpoint")
     model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
 
     torch.save({
@@ -1099,5 +602,3 @@ for TARGET in families:
         'embd_dim': 8,
         'non_neg': False,
     }, model_path)
-
-    print(f"Final model saved to {model_path}", flush=True)
