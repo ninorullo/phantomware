@@ -1,12 +1,8 @@
-from collections import deque
-
-import random
 import numpy as np
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 
 def drop_zeros_hook(module, grad_input, grad_out):
     """
@@ -162,9 +158,5 @@ class LowMemConvBase(nn.Module):
         x_selected = self.pooling(x_selected)
         x_selected = x_selected.view(x_selected.size(0), -1)
 
-        # print("DEBUG: seq2fix final x_fixed shape:", x_selected.shape)
-        # print("x_fixed v1:", x_selected)
-        # print("max-min v1:", x_selected.max(), x_selected.min())
-        # print("mean v1:", x_selected.mean())
         return x_selected
         
