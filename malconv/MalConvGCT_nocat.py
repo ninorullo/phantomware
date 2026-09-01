@@ -1,15 +1,9 @@
-from collections import deque
-from collections import OrderedDict 
-
-import random
-import numpy as np
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-#from torch.utils.checkpoint import checkpoint
 import checkpoint #This checkpoint implementation is faster than PyTorch's when using multiple GPUs
-
 
 from LowMemConv import LowMemConvBase
 from MalConvML import MalConvML
@@ -52,7 +46,6 @@ class MalConvGCT(LowMemConvBase):
         #one-by-one cons to perform information sharing
         self.convs_share = nn.ModuleList([nn.Conv1d(channels, channels, 1, bias=True) for i in range(layers)])
 
-        
         self.fc_1 = nn.Linear(channels, channels)
         self.fc_2 = nn.Linear(channels, out_size)
         
@@ -62,7 +55,6 @@ class MalConvGCT(LowMemConvBase):
         return self.context_net.determinRF()
 
     def processRange(self, x, gct=None):
-        #print('DEBUG: processRange called with x shape:', x.shape)
         if gct is None:
             raise Exception("No Global Context Given")
 
@@ -72,7 +64,6 @@ class MalConvGCT(LowMemConvBase):
         for idx, (conv_glu, linear_cntx, conv_share) in enumerate(zip(self.convs, self.linear_atn, self.convs_share)):
             x = F.glu(conv_glu(x), dim=1)
             x = F.leaky_relu(conv_share(x))
-
 
             x_len = x.shape[2]
             B, C = x.shape[0], x.shape[1]
@@ -88,7 +79,6 @@ class MalConvGCT(LowMemConvBase):
         return x
     
     def forward(self, x):
-        #print("DEBUG: forward called with x shape:", x.shape)
         if self.low_mem:
             global_context = checkpoint.CheckpointFunction.apply(self.context_net.seq2fix,1, x)
         else:
@@ -98,8 +88,6 @@ class MalConvGCT(LowMemConvBase):
         
         penult = x = F.leaky_relu(self.fc_1( x ))
         x = self.fc_2(x)
-        #print("DEBUG: x_fixed shape:", post_conv.shape)
-        #print("DEBUG: logits shape:", x.shape)
         return x, penult, post_conv
 
     def classify_from_penult(self, penult):
