@@ -9,16 +9,6 @@ from MalConvGCT_nocat import MalConvGCT
 from binaryLoader import BinaryDataset, RandomChunkSampler, pad_collate_func
 import argparse
 
-#------------------------------------------
-# RUN command: python MalConvGCT_nocatTrain.py TARGET_FAMILY_NAME
-#------------------------------------------
-
-#Check if the input is a valid directory
-def dir_path(string):
-    if os.path.isdir(string):
-        return string
-    else:
-        raise NotADirectoryError(string)
 
 parser = argparse.ArgumentParser(description='Train a MalConv model')
 
@@ -48,17 +38,17 @@ BATCH_SIZE = args.batch_size
 #target_family = args.target_family
 target_family = 'family1'  # Replace with the desired target family
 
-ben_train = pd.read_csv('../data/real_data/training_goodware.csv')
-mal_train = pd.read_csv('../data/real_data/training_malware.csv')
+goodware_training = pd.read_csv('../data/real_data/training_goodware.csv')
+malware_training = pd.read_csv('../data/real_data/training_malware.csv')
 
-ben_dir = "../data/real_data/goodware/"
-mal_dir = "../data/real_data/malware/"
+goodware_dir = "../data/real_data/goodware/"
+malware_dir = "../data/real_data/malware/"
 
-train_dataset = BinaryDataset(ben_dir, mal_dir, ben_train, mal_train, sort_by_size=True, max_len=MAX_FILE_LEN)
+training_dataset = BinaryDataset(goodware_dir, malware_dir, goodware_training, malware_training, sort_by_size=True, max_len=MAX_FILE_LEN)
 loader_threads = 0
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=loader_threads, collate_fn=pad_collate_func,
-                          sampler=RandomChunkSampler(train_dataset, BATCH_SIZE))
+training_loader = DataLoader(training_dataset, batch_size=BATCH_SIZE, num_workers=loader_threads, collate_fn=pad_collate_func,
+                             sampler=RandomChunkSampler(training_dataset, BATCH_SIZE))
 
 if GPUS is None:#use ALL of them! (Default) 
     device_str = "cuda:0"
@@ -88,7 +78,7 @@ for epoch in tqdm(range(EPOCHS)):
     train_correct = 0
     train_total = 0
 
-    for inputs, labels, _, _ in train_loader:
+    for inputs, labels, _, _ in training_loader:
         labels = labels.to(device)
 
         optimizer.zero_grad()
@@ -115,6 +105,10 @@ for epoch in tqdm(range(EPOCHS)):
     )
 
 print("\nTraining finished.\n")
+
+# -----------------------
+# Saving model
+# -----------------------
 print("Saving final model...")
 
 model_path = os.path.join('../models', target_family + ".checkpoint")

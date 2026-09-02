@@ -2,7 +2,9 @@
 
 This code implements the embedding generation process.
 It extracts embeddings from a pre-trained MalConv model,
-selects representative benign and malware samples, and generates synthetic embeddings that are centered around benign samples but perturbed towards malware-specific directions. The generated embeddings can be used for further analysis or training of machine learning models for malware detection.
+selects representative goodware and malware samples,
+and generates synthetic malware embeddings.
+The generated embeddings can be used to finetune machine learning models for malware detection.
 
 '''
 
@@ -22,15 +24,15 @@ import pandas as pd
 from tqdm import tqdm
 
 
-def select_benign_extremes(
+def select_goodware_extremes(
         good_embeds,
         n_components=20,
         samples_per_side=50,
         device="cuda"
 ):
     """
-    Select benign samples lying on the outer shell
-    of the benign manifold.
+    Select goodware samples lying on the outer shell
+    of the goodware manifold.
 
     Returns:
         frontier_samples [N,D]
@@ -67,7 +69,7 @@ def select_benign_extremes(
     return frontier_samples.to(device)
 
 
-def select_benign_representatives(
+def select_goodware_representatives(
         good_embeds: torch.Tensor,
         mal_embeds: torch.Tensor,
         k_centroids: int = 1000,
@@ -76,7 +78,7 @@ def select_benign_representatives(
 ):
     """
     Returns:
-        combined benign subset:
+        combined goodware subset:
         [k_centroids + k_boundary, D]
     """
 
@@ -84,7 +86,7 @@ def select_benign_representatives(
     mal = mal_embeds.to(device)
 
     # -------------------------------------------------------
-    # 1. K-MEANS CENTROIDS (global benign structure)
+    # 1. K-MEANS CENTROIDS (global goodware structure)
     # -------------------------------------------------------
     kmeans = KMeans(
         n_clusters=k_centroids,
@@ -102,7 +104,7 @@ def select_benign_representatives(
     )
 
     # -------------------------------------------------------
-    # 2. BOUNDARY SAMPLES (closest benign to malware)
+    # 2. BOUNDARY SAMPLES (closest goodware to malware)
     # -------------------------------------------------------
     good = good_embeds.to(device)
 
@@ -115,9 +117,9 @@ def select_benign_representatives(
     # -------------------------------------------------------
     # 3. COMBINE
     # -------------------------------------------------------
-    benign_subset = torch.cat([centroids, boundary_samples], dim=0)
+    goodware_subset = torch.cat([centroids, boundary_samples], dim=0)
 
-    return boundary_samples.to(device), benign_subset.to(device)
+    return boundary_samples.to(device), goodware_subset.to(device)
 
 
 def sample_goodware(good_embeds):
@@ -310,7 +312,7 @@ target_family_embeddings = F.normalize(target_family_embeddings, dim=1)
 # -----------------------
 # Sample centroid and frontier samples from the goodware manifold
 # -----------------------
-goodware_boundary_samples, goodware_centroid_and_boundary_samples = select_benign_representatives(
+goodware_boundary_samples, goodware_centroid_and_boundary_samples = select_goodware_representatives(
     goodware_embeddings,
     target_family_embeddings,
     k_boundary=1000,
@@ -318,7 +320,7 @@ goodware_boundary_samples, goodware_centroid_and_boundary_samples = select_benig
     device=device
 )
 
-goodware_frontier_samples = select_benign_extremes(
+goodware_frontier_samples = select_goodware_extremes(
     goodware_embeddings,
     n_components=20,
     samples_per_side=50,

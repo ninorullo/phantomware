@@ -2,10 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-import torch.nn.functional as F
 import os
 import pandas as pd
-import time
 from torch.utils.data import DataLoader, Dataset
 from binaryLoader import BinaryDataset, pad_collate_func, RandomChunkSampler
 from MalConvGCT_nocat import MalConvGCT
@@ -366,7 +364,7 @@ def select_symmetric_representatives(
 
 
 # =========================================================
-# TRAINING FUNCTIONS
+# FINETUNING FUNCTIONS
 # =========================================================
 def finetune_model(
         model,
