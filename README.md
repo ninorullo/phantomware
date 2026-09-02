@@ -30,3 +30,7 @@ This directory contains the Phantomware framework.
  - `torch==2.1.2`
  - `numpy==1.26.0`
  - `pandas==2.1.1`
+
+## Cite
+
+TBA
