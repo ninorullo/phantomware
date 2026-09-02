@@ -10,7 +10,7 @@ variants without requiring functional malware generation or adversarial optimiza
 
 1. Update `target_family.txt` with the name of the target malware family. The target family is the malware family you want to augment with synthetic samples.
 2. Populate the `data/real_data/goodware` and `data/real_data/malware` directories with your training data, ensuring malware samples use the .exe file extension while goodware samples remain without any file extension.
-3. Populate `training_goodware.csv` and `training_malware.csv` with the filenames of your selected training samples.
+3. Populate `data/real_data/training_goodware.csv` and `data/real_data/training_malware.csv` with the filenames of your selected training samples.
 4. Run `MalConvGCT_nocatTrain.py` to train the MalConv model on your dataset.
 5. Run `embedding_generation.py` to generate synthetic malware representations in the latent space of the pretrained MalConv model.
 6. Run `finetuning.py` to fine-tune the pretrained MalConv model on the augmented dataset.
