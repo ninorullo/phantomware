@@ -36,7 +36,9 @@ EPOCHS = args.epochs
 MAX_FILE_LEN = args.max_len
 BATCH_SIZE = args.batch_size
 #target_family = args.target_family
-target_family = 'family1'  # Replace with the desired target family
+
+with open("../target_family.txt", "r") as f:
+    target_family = f.read().strip()
 
 goodware_training = pd.read_csv('../data/real_data/training_goodware.csv')
 malware_training = pd.read_csv('../data/real_data/training_malware.csv')

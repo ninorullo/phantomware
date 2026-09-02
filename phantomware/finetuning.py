@@ -441,7 +441,9 @@ def finetune_model(
 
 
 device = "cuda"
-target_family = 'family1'  # Replace with the desired target family
+
+with open("../target_family.txt", "r") as f:
+    target_family = f.read().strip()
 
 # -----------------------
 # Load MalConv
@@ -526,7 +528,7 @@ model = finetune_model(
 # Save model
 # -----------------------
 
-model_path = os.path.join('../models', target_family + ".checkpoint")
+model_path = os.path.join('../models', 'finetuned_' + target_family + ".checkpoint")
 model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
 
 torch.save({

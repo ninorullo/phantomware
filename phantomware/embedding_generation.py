@@ -256,7 +256,9 @@ def generate_synthetic_embeddings(
 
 
 device = "cuda"
-target_family = 'family1'  # Replace with the desired target family
+
+with open("../target_family.txt", "r") as f:
+    target_family = f.read().strip()
 
 # -----------------------
 # Load dataset
