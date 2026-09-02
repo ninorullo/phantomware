@@ -34,3 +34,6 @@ This directory contains the Phantomware framework.
 ## Cite
 
 TBA
+
+## Contributors
+- [@ninorullo](https://github.com/ninorullo)
