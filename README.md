@@ -25,6 +25,10 @@ This directory contains a Phantomware-compatible version of MalConv2, a malware 
 
 This directory contains the Phantomware framework. 
 
+### models
+
+This directory stores the pre-trained MalConv model generated during the initial training phase, and the fine-tuned MalConv model produced after completing the fine-tuning process.
+
 ## Requirements
 
  - `torch==2.1.2`
