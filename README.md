@@ -33,7 +33,7 @@ This directory contains the Phantomware framework.
 
 ## Cite
 
-TBA
+TBAA
 
 ## Contributors
 - [@ninorullo](https://github.com/ninorullo)
