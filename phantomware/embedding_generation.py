@@ -253,169 +253,105 @@ def generate_synthetic_embeddings(
     return torch.cat(all_samples, dim=0)
 
 
-families = [
-    'tofsee'
-
-    # #'ganelp',
-    #  'sfone',
-    #  'wacatac',
-    #  'sillyp2p',
-    # #'upatre',
-    #  'wabot',
-    #  'small',
-    #  'dinwod',
-    # #'mira',
-    #  'berbew',
-    # #'ceeinject',
-    # #'gepys',
-    #  'benjamin',
-    # #'musecador',
-    #  'autoit',
-    # #'gandcrab',
-    # #'drolnux',
-    #  'smokeloader',
-    #  'unruy',
-    #  'qukart',
-    #  'delf',
-    #  'padodor',
-    # #'autorun',
-    # #'urelas',
-    #  'mintluks',
-    #  'picsys',
-    #  'fakeav',
-    # #'bladabindi',
-    #  'zbot',
-    # #'vflooder',
-    # #'lunam',
-    # #'tofsee',
-    #  'sytro',
-    # #'fuerboos',
-    # #'mydoom',
-    # #'pykspa',
-    #  'agent',
-    #  'soltern',
-    #  'qqpass',
-    # #'blocker',
-    # #'ircbot',
-    # #'coinminer',
-    # #'salgorea',
-    #  'stormser',
-    #  'fasong',
-    #  'cryptinject',
-    # #'vobfus',
-    #  'dorv',
-    #  'nitol',
-    #  'stration',
-    #  'eggnog',
-    #  'occamy',
-    #  'banload',
-    #  'glupteba',
-    # #'shifu',
-    #  'pluto',
-    #  'ditertag'
-]
-
 device = "cuda"
+target_family = 'family1'  # Replace with the desired target family
 
-for TARGET in families:
-    print(f"\n=== FAMILY: {TARGET} ===", flush=True)
+# -----------------------
+# Load dataset
+# -----------------------
+training_goodware_samples = pd.read_csv('../data/real_data/training_goodware.csv')
+training_malware_samples = pd.read_csv('../data/real_data/training_malware.csv')
+training_target_family_malware_samples = training_malware_samples[training_malware_samples["family"] == target_family]
 
-    # -----------------------
-    # Load dataset
-    # -----------------------
-    training_goodware_samples = pd.read_csv('../data/real_data/training_goodware.csv')
-    training_malware_samples = pd.read_csv('../data/real_data/training_malware.csv')
-    training_target_family_malware_samples = training_malware_samples[training_malware_samples["family"] == TARGET]
+dataset = BinaryDataset(
+    "../data/real_data/goodware/",
+    "../data/real_data/malware/",
+    training_goodware_samples,
+    training_target_family_malware_samples,
+    sort_by_size=True,
+    max_len=16000000
+)
 
-    dataset = BinaryDataset(
-        "../data/real_data/goodware/",
-        "../data/real_data/malware/",
-        training_goodware_samples,
-        training_target_family_malware_samples,
-        sort_by_size=True,
-        max_len=16000000
-    )
+loader_goodware_and_target = DataLoader(
+    dataset,
+    batch_size=128,
+    num_workers=0,
+    collate_fn=pad_collate_func
+)
 
-    loader_goodware_and_target = DataLoader(
-        dataset,
-        batch_size=128,
-        num_workers=0,
-        collate_fn=pad_collate_func
-    )
+# -----------------------
+# Load MalConv
+# -----------------------
+model_path = os.path.join('../models', target_family + ".checkpoint")
 
-    # -----------------------
-    # Load MalConv
-    # -----------------------
-    model_path = os.path.join('../models', TARGET + ".checkpoint")
+malconv_model = MalConvGCT(
+    channels=128,
+    window_size=256,
+    stride=64,
+    embd_size=8,
+    low_mem=False
+).to(device)
 
-    malconv_model = MalConvGCT(
-        channels=128,
-        window_size=256,
-        stride=64,
-        embd_size=8,
-        low_mem=False
-    ).to(device)
+checkpoint = torch.load(model_path, map_location=device)
+malconv_model.load_state_dict(checkpoint["model_state_dict"])
 
-    checkpoint = torch.load(model_path, map_location=device)
-    malconv_model.load_state_dict(checkpoint["model_state_dict"])
+# -----------------------
+# Extract embeddings
+# -----------------------
+goodware_embeddings, target_family_embeddings = extract_embeddings(malconv_model, loader_goodware_and_target, device)
+print("Good:", goodware_embeddings.shape, "Mal:", target_family_embeddings.shape, flush=True)
 
-    # -----------------------
-    # Extract embeddings
-    # -----------------------
-    goodware_embeddings, target_family_embeddings = extract_embeddings(malconv_model, loader_goodware_and_target, device)
-    print("Good:", goodware_embeddings.shape, "Mal:", target_family_embeddings.shape, flush=True)
+goodware_embeddings = goodware_embeddings.to(device)
+target_family_embeddings = target_family_embeddings.to(device)
 
-    goodware_embeddings = goodware_embeddings.to(device)
-    target_family_embeddings = target_family_embeddings.to(device)
+goodware_embeddings = F.normalize(goodware_embeddings, dim=1)
+target_family_embeddings = F.normalize(target_family_embeddings, dim=1)
 
-    goodware_embeddings = F.normalize(goodware_embeddings, dim=1)
-    target_family_embeddings = F.normalize(target_family_embeddings, dim=1)
+# -----------------------
+# Sample centroid and frontier samples from the goodware manifold
+# -----------------------
+goodware_boundary_samples, goodware_centroid_and_boundary_samples = select_benign_representatives(
+    goodware_embeddings,
+    target_family_embeddings,
+    k_boundary=1000,
+    k_centroids=1000,
+    device=device
+)
 
-    # -----------------------
-    # Sample centroid and frontier samples from the goodware manifold
-    # -----------------------
-    goodware_boundary_samples, goodware_centroid_and_boundary_samples = select_benign_representatives(
-        goodware_embeddings,
-        target_family_embeddings,
-        k_boundary=1000,
-        k_centroids=1000,
-        device=device
-    )
+goodware_frontier_samples = select_benign_extremes(
+    goodware_embeddings,
+    n_components=20,
+    samples_per_side=50,
+    device=device
+)
 
-    goodware_frontier_samples = select_benign_extremes(
-        goodware_embeddings,
-        n_components=20,
-        samples_per_side=50,
-        device=device
-    )
+print('good_frontier.shape', goodware_frontier_samples.shape)
 
-    print('good_frontier.shape', goodware_frontier_samples.shape)
+goodware_anchors_pool = torch.cat([
+    goodware_boundary_samples[:50],
+    goodware_frontier_samples
+], dim=0)
 
-    goodware_anchors_pool = torch.cat([
-        goodware_boundary_samples[:50],
-        goodware_frontier_samples
-    ], dim=0)
+goodware_anchors_pool = torch.unique(
+    goodware_anchors_pool,
+    dim=0
+)
 
-    goodware_anchors_pool = torch.unique(
-        goodware_anchors_pool,
-        dim=0
-    )
+# -----------------------
+# Generate synthetic
+# -----------------------
+synthetic_embeddings = generate_synthetic_embeddings(
+    target_family_embeddings,
+    500,
+    goodware_centroid_and_boundary_samples,
+    goodware_anchors_pool
+)
 
-    # -----------------------
-    # Generate synthetic
-    # -----------------------
-    synthetic_embeddings = generate_synthetic_embeddings(
-        target_family_embeddings,
-        500,
-        goodware_centroid_and_boundary_samples,
-        goodware_anchors_pool
-    )
-
-    # -----------------------
-    # Save synthetic
-    # -----------------------
-    save_path = os.path.join('../synthetic_data', f"synthetic_embeddings_{TARGET}.csv")
-    stacked_synth_embs = synthetic_embeddings.cpu().numpy()
-    df = pd.DataFrame(stacked_synth_embs)
-    print('\ngenerated', len(df), 'synthetic samples', flush=True)
-    df.to_csv(save_path, index=False)
+# -----------------------
+# Save synthetic
+# -----------------------
+save_path = os.path.join('../synthetic_data', f"synthetic_embeddings_{target_family}.csv")
+stacked_synth_embs = synthetic_embeddings.cpu().numpy()
+df = pd.DataFrame(stacked_synth_embs)
+print('\ngenerated', len(df), 'synthetic samples', flush=True)
+df.to_csv(save_path, index=False)

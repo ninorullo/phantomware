@@ -32,7 +32,7 @@ parser.add_argument('--batch_size', type=int, default=128, help='Batch size duri
 #Default is set ot 16 MB! 
 parser.add_argument('--max_len', type=int, default=16000000, help='Maximum length of input file in bytes, at which point files will be truncated')
 parser.add_argument('--gpus', nargs='+', type=int)
-parser.add_argument('target_family', type=str, help='Target malware family')
+#parser.add_argument('target_family', type=str, help='Target malware family')
 
 args = parser.parse_args()
 
@@ -45,7 +45,8 @@ NUM_CHANNELS= args.num_channels
 EPOCHS = args.epochs
 MAX_FILE_LEN = args.max_len
 BATCH_SIZE = args.batch_size
-target_family = args.target_family
+#target_family = args.target_family
+target_family = 'family1'  # Replace with the desired target family
 
 ben_train = pd.read_csv('../data/real_data/training_goodware.csv')
 mal_train = pd.read_csv('../data/real_data/training_malware.csv')
@@ -77,9 +78,10 @@ if GPUS is None or len(GPUS) > 1:
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters())
-    
-print("\n================ TRAINING ================\n")
 
+# -----------------------
+# Training loop
+# -----------------------
 for epoch in tqdm(range(EPOCHS)):
     model.train()
     running_loss = 0.0

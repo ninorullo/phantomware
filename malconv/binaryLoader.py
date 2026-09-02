@@ -9,11 +9,10 @@ class BinaryDataset(data.Dataset):
     """
     Loader for binary files. 
     
-    If you use the sort_by_file_size option, the dataset will store files from smallest to largest. This is meant to used with RandomChunkSampler to sammple batches of similarly sized files to maximize performance. 
-    
-    TODO: Auto un-gzip files if they have g-zip compression 
+    If you use the sort_by_file_size option, the dataset will store files from smallest to largest.
+    This is meant to used with RandomChunkSampler to sammple batches of similarly sized files to maximize performance.
     """
-    def __init__(self, good_dir, bad_dir, good_csv, bad_csv, sort_by_size=False, max_len=16000000):
+    def __init__(self, goodware_dir, malware_dir, goodware_csv, malware_csv, sort_by_size=False, max_len=16000000):
 
         bad_file_extension = '.exe'
         good_file_extension = ''
@@ -22,14 +21,14 @@ class BinaryDataset(data.Dataset):
         self.all_files = []
         self.max_len = max_len
 
-        if good_csv is not None:
-            for _, file in good_csv.iterrows():
-                to_add = os.path.join(good_dir, str(file.values[0]) + good_file_extension)
+        if goodware_csv is not None:
+            for _, file in goodware_csv.iterrows():
+                to_add = os.path.join(goodware_dir, str(file.values[0]) + good_file_extension)
                 self.all_files.append(  (to_add, 0, os.path.getsize(to_add), 'goodware'))
 
-        if bad_csv is not None:
-            for _, file in bad_csv.iterrows():
-                to_add = os.path.join(bad_dir, str(file.values[0]) + bad_file_extension)
+        if malware_csv is not None:
+            for _, file in malware_csv.iterrows():
+                to_add = os.path.join(malware_dir, str(file.values[0]) + bad_file_extension)
                 self.all_files.append(  (to_add, 1, os.path.getsize(to_add), str(file.values[2])))
                 
         if sort_by_size:

@@ -442,163 +442,101 @@ def finetune_model(
     return model
 
 
-families = [
-    # 'ganelp',
-    # # 'sfone',
-    # # 'wacatac',
-    # # 'sillyp2p',
-    # 'upatre',
-    # # 'wabot',
-    # # 'small',
-    # # 'dinwod',
-    # 'mira',
-    # # 'berbew',
-    # 'ceeinject',
-    # 'gepys',
-    # # 'benjamin',
-    # 'musecador',
-    # # 'autoit',
-    # 'gandcrab',
-    # 'drolnux',
-    # # 'smokeloader',
-    # # 'unruy',
-    # # 'qukart',
-    # # 'delf',
-    # # 'padodor',
-    # 'autorun',
-    # 'urelas',
-    # # 'mintluks',
-    # # 'picsys',
-    # # 'fakeav',
-    # 'bladabindi',
-    # # 'zbot',
-     'vflooder',
-    # 'lunam',
-    # 'tofsee',
-    # # 'sytro',
-    # 'fuerboos',
-    # 'mydoom',
-    # 'pykspa',
-    # # 'agent',
-    # # 'soltern',
-    # # 'qqpass',
-    # 'blocker',
-    # 'ircbot',
-    # 'coinminer',
-    # 'salgorea',
-    # # 'stormser',
-    # # 'fasong',
-    # # 'cryptinject',
-    # 'vobfus',
-    # # 'dorv',
-    # # 'nitol',
-    # # 'stration',
-    # # 'eggnog',
-    # # 'occamy',
-    # # 'banload',
-    # # 'glupteba',
-    #'shifu',
-    # 'pluto',
-    # 'ditertag'
-]
-
 device = "cuda"
+target_family = 'family1'  # Replace with the desired target family
 
-for TARGET in families:
-    print(f"\n=== FAMILY: {TARGET} ===", flush=True)
+# -----------------------
+# Load MalConv
+# -----------------------
+model_path = os.path.join('../models', target_family + ".checkpoint")
 
-    # -----------------------
-    # Load MalConv
-    # -----------------------
-    model_path = os.path.join('../models', TARGET + ".checkpoint")
+malconv_model = MalConvGCT(
+    channels=128,
+    window_size=256,
+    stride=64,
+    embd_size=8,
+    low_mem=False
+)
 
-    malconv_model = MalConvGCT(
-        channels=128,
-        window_size=256,
-        stride=64,
-        embd_size=8,
-        low_mem=False
-    )
+checkpoint = torch.load(model_path, map_location=device)
+malconv_model.load_state_dict(checkpoint["model_state_dict"])
 
-    checkpoint = torch.load(model_path, map_location=device)
-    malconv_model.load_state_dict(checkpoint["model_state_dict"])
+# -----------------------
+# Load synthetic embeddings
+# -----------------------
+quantity = 50
+synthetic_embeddings_path = os.path.join('../models', f"synthetic_embeddings_{target_family}.csv")
+synthetic_embeddings = load_synthetic_embeddings(synthetic_embeddings_path, quantity, device)
 
-    # -----------------------
-    # Load synthetic embeddings
-    # -----------------------
-    quantity = 50
-    synthetic_embeddings_path = os.path.join('../models', f"synthetic_embeddings_{TARGET}.csv")
-    synthetic_embeddings = load_synthetic_embeddings(synthetic_embeddings_path, quantity, device)
+# -----------------------
+# select representative training malware and goodware samples (hard negatives + centroid representatives)
+# ----------------------
+loader_malware = DataLoader(
+    SHADataset(
+        csv_path='../data/real_data/training_malware.csv',
+        source_dir="../data/real_data/malware/",
+        sha_column="sha",
+        isGoodware=False,
+        max_len=16000000
+    ),
+    batch_size=4,
+    shuffle=False, #keep False to maintain order for SHA-family mapping
+    num_workers=2,
+    pin_memory=True,
+    collate_fn=pad_collate_func
+)
 
-    # -----------------------
-    # select representative training malware and goodware samples (hard negatives + centroid representatives)
-    # ----------------------
-    loader_malware = DataLoader(
-        SHADataset(
-            csv_path='../data/real_data/training_malware.csv',
-            source_dir="../data/real_data/malware/",
-            sha_column="sha",
-            isGoodware=False,
-            max_len=16000000
-        ),
-        batch_size=4,
-        shuffle=False, #keep False to maintain order for SHA-family mapping
-        num_workers=2,
-        pin_memory=True,
-        collate_fn=pad_collate_func
-    )
+loader_goodware = DataLoader(
+    SHADataset(
+        csv_path='../data/real_data/training_goodware.csv',
+        source_dir="../data/real_data/goodware/",
+        sha_column="sha",
+        isGoodware=True,
+        max_len=16000000
+    ),
+    batch_size=4,
+    shuffle=False,  # keep False to maintain order for SHA-family mapping
+    num_workers=2,
+    pin_memory=True,
+    collate_fn=pad_collate_func
+)
 
-    loader_goodware = DataLoader(
-        SHADataset(
-            csv_path='../data/real_data/training_goodware.csv',
-            source_dir="../data/real_data/goodware/",
-            sha_column="sha",
-            isGoodware=True,
-            max_len=16000000
-        ),
-        batch_size=4,
-        shuffle=False,  # keep False to maintain order for SHA-family mapping
-        num_workers=2,
-        pin_memory=True,
-        collate_fn=pad_collate_func
-    )
+representative_samples = select_symmetric_representatives(
+    model=malconv_model,
+    good_loader=loader_goodware,
+    malware_loader=loader_malware,
+    device=device,
+    hard_k=1000,  # top 1000 hard malware representatives (closest to target family centroid)
+    centroid_k=1000  # top 1000 centroids representing global malware structure (excluding target family)
+)
 
-    representative_samples = select_symmetric_representatives(
-        model=malconv_model,
-        good_loader=loader_goodware,
-        malware_loader=loader_malware,
-        device=device,
-        hard_k=1000,  # top 1000 hard malware representatives (closest to target family centroid)
-        centroid_k=1000  # top 1000 centroids representing global malware structure (excluding target family)
-    )
+# -----------------------
+# Fine-tune model
+# -----------------------
+train_loader = build_train_loader(target_family, representative_samples)
 
-    # -----------------------
-    # Fine-tune model
-    # -----------------------
-    train_loader = build_train_loader(TARGET, representative_samples)
+model = finetune_model(
+    model=malconv_model,
+    train_loader=train_loader,
+    synthetic_embeddings=synthetic_embeddings,
+    device=device,
+    epochs=10,
+    lambda_synth=2.0,
+)
 
-    model = finetune_model(
-        model=malconv_model,
-        train_loader=train_loader,
-        synthetic_embeddings=synthetic_embeddings,
-        device=device,
-        epochs=10,
-        lambda_synth=2.0,
-    )
+# -----------------------
+# Save model
+# -----------------------
 
-    # -----------------------
-    # Save model
-    # -----------------------
+model_path = os.path.join('../models', target_family + ".checkpoint")
+model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
 
-    model_path = os.path.join('../models', TARGET + ".checkpoint")
-    model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-
-    torch.save({
-        'epoch': 10,
-        'model_state_dict': model_state,
-        'channels': 128,
-        'filter_size': 256,
-        'stride': 64,
-        'embd_dim': 8,
-        'non_neg': False,
-    }, model_path)
+torch.save({
+    'epoch': 10,
+    'model_state_dict': model_state,
+    'channels': 128,
+    'filter_size': 256,
+    'stride': 64,
+    'embd_dim': 8,
+    'non_neg': False,
+}, model_path)
